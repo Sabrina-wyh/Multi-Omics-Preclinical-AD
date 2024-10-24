@@ -14,6 +14,8 @@ We utilized data from 90 participants in the AIBL cohort, all of whom had comple
 ## General pipeline
 ![general pipeline](./plots/general_pipeline.png)
 
+## Overall Data Description
+![basic statistics](./plots/basic-statistics.png)
 
 ## ML construction pipeline
 ![ML construction pipeline](./plots/ML_construction.png)
@@ -26,9 +28,10 @@ The data used in this study are derived from the Australian Imaging, Biomarkers,
 
 ## File Description
 - [ML_code](/ML_code): The code for ML model construction
-    - [omics-preprocessing](/ML_code/omics-preprocessing.ipynb): merge proteomics and metabolomics and different version of data construction (e.g. with omics data only, merge with demogrphic, impute for missing)
-    - [plots](/ML_code/plots.ipynb): gives several basic statistic info and plots (e.g. PCA elbow plots, volcano plots, heatmap, violin plot for top features)
-    - [model-evaluation](/ML_code/Model-evaluation-with-demo-IQR.ipynb): ML model construction and evaluation for data given.
+    - [preprocessing](/ML_code/preprocessing.ipynb): merge proteomics and metabolomics and different version of data construction (e.g. with omics data only, merge with demogrphic, impute for missing)
+    - [plots-R](/ML_code/plots.Rmd): gives basic statistic plots (e.g. population pyramid)
+    - [plots-python](/ML_code/plots.ipynb): gives several basic statistic info and plots (e.g. PCA elbow plots, volcano plots, heatmap, violin plot for top features)
+    - [model-evaluation](/ML_code/Model-evaluation-IQR.ipynb): ML model construction and evaluation for data given (only the LR related model provided).
 - [results](/results): The saved ML model results
 - [plots](/plots): Store several plots results for ML models.
 
