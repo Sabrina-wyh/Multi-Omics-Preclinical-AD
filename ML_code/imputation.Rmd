@@ -1,0 +1,96 @@
+---
+title: "missing_impute"
+author: "Yihan Wang"
+date: "2024-08-28"
+output: word_document
+---
+
+```{r}
+library(missRanger)
+```
+
+
+```{r}
+omics_with_aibl <- read.csv("../data/merged_data/omics_aibl_demo.csv", na.strings = c("", "NA"))
+```
+
+```{r}
+columns_to_check = c("APOE4", 'Demographic.ApoE.genotype','Demographic.Years.of.Education','Demographic.Years.of.Education.Exact', 'Age', 'Demographic.Sex',
+                                    'Demographic.Primary.Occupation', 'Demographic.Retirement.Status','Demographic.Current.Marital.Status', 'Demographic.Country.of.Birth', 'Demographic.Handedness', 'Vital.Signs.Body.Mass.Index', 'Demographic.GDS')
+
+for (col in columns_to_check){
+  missing_percentage <- (sum(is.na(omics_with_aibl[[col]])) / length(omics_with_aibl[[col]])) * 100
+  print(paste(col, ":", missing_percentage, "% missing"))
+}
+```
+
+
+```{r}
+impute_education <- function(row) {
+  range_map <- list(
+    '9-12' = 10,
+    '13-15' = 14,
+    '7-8' = 7,
+    '15+' = 15
+  )
+  
+  education_range <- row['Demographic.Years.of.Education']
+  
+  if (is.na(row['Demographic.Years.of.Education.Exact'])) {
+    return(range_map[[education_range]])
+  } else {
+    return(row['Demographic.Years.of.Education.Exact'])
+  }
+}
+
+omics_with_aibl$`Demographic.Years.of.Education.Exact` <- apply(omics_with_aibl, 1, impute_education)
+```
+
+```{r}
+unique(omics_with_aibl$Demographic.GDS)
+
+```
+
+```{r}
+summary(omics_with_aibl[columns_to_check])
+```
+
+```{r}
+omics_with_aibl$APOE4 <- factor(omics_with_aibl$APOE4)
+omics_with_aibl$Demographic.ApoE.genotype <- factor(omics_with_aibl$Demographic.ApoE.genotype)
+omics_with_aibl$Demographic.Years.of.Education <- factor(omics_with_aibl$Demographic.Years.of.Education, levels = c("7-8", "9-12", "13-15","15+"), ordered = TRUE) 
+omics_with_aibl$Demographic.Years.of.Education.Exact <-as.numeric(omics_with_aibl$Demographic.Years.of.Education.Exact)
+omics_with_aibl$Age <-as.numeric(omics_with_aibl$Age)
+omics_with_aibl$Demographic.Sex <- factor(omics_with_aibl$Demographic.Sex)
+omics_with_aibl$Demographic.Primary.Occupation <- factor(omics_with_aibl$Demographic.Primary.Occupation)
+omics_with_aibl$Demographic.Retirement.Status <- factor(omics_with_aibl$Demographic.Retirement.Status)
+omics_with_aibl$Demographic.Current.Marital.Status <- factor(omics_with_aibl$Demographic.Current.Marital.Status)
+omics_with_aibl$Demographic.Country.of.Birth <- factor(omics_with_aibl$Demographic.Country.of.Birth)
+omics_with_aibl$Demographic.Handedness <- factor(omics_with_aibl$Demographic.Handedness)
+omics_with_aibl$Vital.Signs.Body.Mass.Index <- as.numeric(omics_with_aibl$Vital.Signs.Body.Mass.Index)
+omics_with_aibl$Demographic.GDS <- factor(omics_with_aibl$Demographic.GDS, levels = c("0", "1", "2","3","4","5","6","7"), ordered = TRUE) 
+
+
+```
+
+
+
+```{r}
+set.seed(42)
+cols_to_exclude <- c("AIBL.ID", "Collection", "label")
+data_to_impute <- omics_with_aibl[, !names(omics_with_aibl) %in% cols_to_exclude]
+
+# Perform imputation
+imputed_data <- missRanger(data_to_impute, num.trees = 100, verbose = 1, pmm.k = 5)
+for (col in cols_to_exclude) {
+    imputed_data[col] <- omics_with_aibl[col]
+}
+
+```
+
+
+
+```{r}
+write.csv(imputed_data, "../data/merged_data/omics_aibl_demo_impute.csv", row.names = FALSE)
+
+```
