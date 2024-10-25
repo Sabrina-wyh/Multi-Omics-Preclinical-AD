@@ -8,7 +8,7 @@ Yihan Wang, Alanna G. Spiteri, Katherine Jeppe, Joel R. Steele, Christopher K. B
 
 
 ## Overview
-We utilized data from 90 participants in the AIBL cohort, all of whom had completed the ORCA (Online Repeatable Cognitive Assessment) learning test. The study incorporated *proteomics* data consisting of 596 high/mid-confidence features, as well as *metabolomics* data with 1,345 peak intensity features. Additionally, *demographic* factors such as age, gender, education, and APOE4 status (yes/no) were included in the analysis. The primary aims of the study were twofold: first, to use minimally invasive data to predict amyloid-beta status (high vs. normal) based on PET imaging; and second, to identify potential biomarkers that can distinguish participants in the preclinical phase of Alzheimer's disease.
+We utilized data from 90 participants in the AIBL cohort, all of whom had completed the ORCA (Online Repeatable Cognitive Assessment) learning test. The study incorporated *proteomics* data consisting of 596 high/mid-confidence features, as well as *metabolomics* data with 1,345 peak intensity features. Additionally, *demographic* factors such as age, gender, education, and APOE4 status (yes/no) were included in the analysis. The primary aims of the study were: 1) to use minimally invasive data to predict amyloid-beta status (high vs. normal) based on PET imaging; and 2) to identify potential biomarkers that can distinguish participants in the preclinical phase of Alzheimer's disease.
 
 
 ## General pipeline
@@ -26,15 +26,15 @@ The study received support from National Health and Medical Research Council, Au
 ## Data Sharing Statement
 The data used in this study are derived from the Australian Imaging, Biomarkers, and Lifestyle (AIBL) dataset, which is subject to specific access conditions. Due to these restrictions, we are unable to share the data directly.
 
-## File Description
-- [ML_code](/ML_code): The code for ML model construction
-    - [preprocessing](/ML_code/preprocessing.ipynb): merge proteomics and metabolomics and different version of data construction (e.g. with omics data only, merge with demogrphic, impute for missing)
-    - [plots-R](/ML_code/plots.Rmd): gives basic statistic plots (e.g. population pyramid)
-    - [plots-python](/ML_code/plots.ipynb): gives several basic statistic info and plots (e.g. PCA elbow plots, volcano plots, heatmap, violin plot for top features)
-    - [model-evaluation](/ML_code/Model-evaluation-IQR.ipynb): ML model construction and evaluation for data given (only the LR related model provided).
-- [results](/results): The saved ML model results
-- [plots](/plots): Store several plots results for ML models.
-
+## Code Repository Structure
+- [ML_code](/ML_code): Contains the code for machine learning model construction and evaluation.
+    - [preprocessing](/ML_code/preprocessing.ipynb): Scripts for merging proteomics and metabolomics data, as well as different versions of dataset construction (e.g., using omics data alone, combined with demographic data, and imputation applied exclusively to demographic information for handling missing values)
+    - [plots-R](/ML_code/plots.Rmd): R code for generating basic statistical plots (e.g., population pyramid).
+    - [plots-python](/ML_code/plots.ipynb): Python code for generating basic statistical summaries and visualizations (e.g., PCA elbow plots, volcano plots, heatmaps, and violin plots for top features).
+    - [model-evaluation](/ML_code/Model-evaluation-IQR.ipynb): Code for machine learning model construction and evaluation, focused on logistic regression (LR) models.
+    - [model-evaluation-full](/ML_code/Model-evaluation-IQR-full.ipynb): Complete machine learning model construction and evaluation for all models considered in the study.
+- [results](/results): Saved results from the machine learning models, corresponding to the supplementary document on model performance.
+- [plots](/plots): Repository of various plots generated during model evaluation and analysis.
 
 
 
