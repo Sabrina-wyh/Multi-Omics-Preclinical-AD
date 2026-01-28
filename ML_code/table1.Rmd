@@ -1,0 +1,64 @@
+---
+title: "plots"
+author: "Yihan Wang"
+date: "2024-10-22"
+output: pdf_document
+---
+```{r}
+library(ggplot2)
+
+```
+
+```{r}
+omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_imputed.csv")
+```
+
+
+```{r}
+library(tableone)
+library(dplyr)
+
+continuous_vars <- c("Age", 
+                     "Demographic.Years.of.Education.Exact",  # Education in years
+                     "Centiloid")  
+
+categorical_vars <- c("APOE4", "label")  
+
+all_vars <- c(continuous_vars, categorical_vars)
+
+# Specify which continuous variables are non-normal (will use median [IQR] instead of mean (SD))
+# and will use Mann-Whitney U test instead of t-test
+nonnormal_vars <- c("Centiloid")  # Add variables that are not normally distributed
+
+table1 <- CreateTableOne(
+  vars = all_vars,
+  strata = "Demographic.Sex", 
+  data = omics_df,
+  factorVars = categorical_vars,
+  test = TRUE,
+  addOverall = TRUE
+)
+
+print(table1, 
+      nonnormal = nonnormal_vars,
+      exact = categorical_vars,  # Use Fisher's exact test for categorical variables
+      smd = FALSE,  # Don't show standardized mean differences
+      showAllLevels = FALSE,  # Don't show all levels of categorical variables
+      cramVars = NULL,
+      contDigits = 1,  # 1 decimal place for continuous variables
+      catDigits = 1,   # 1 decimal place for percentages
+      pDigits = 3,     # 3 decimal places for p-values
+      quote = FALSE,
+      noSpaces = TRUE,
+      printToggle = TRUE)
+
+table1_export <- print(table1, 
+                       nonnormal = nonnormal_vars,
+                       exact = categorical_vars,
+                       smd = FALSE,
+                       showAllLevels = FALSE,
+                       quote = FALSE,
+                       noSpaces = TRUE,
+                       printToggle = FALSE)
+```
+

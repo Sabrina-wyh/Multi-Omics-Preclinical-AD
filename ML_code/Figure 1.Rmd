@@ -1,0 +1,190 @@
+---
+title: "plots"
+author: "Yihan Wang"
+date: "2024-10-22"
+output: pdf_document
+---
+
+```{r}
+omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_imputed.csv")
+```
+
+
+panel A - Raincloud
+```{r}
+# Load required libraries
+library(ggplot2)
+library(ggdist)
+library(dplyr)
+library(patchwork)  # For combining plots
+library(ggpubr)     # For stat_compare_means
+
+# Define color palette (keeping your original colors)
+sex_colors <- c("Female" = "#b57979", "Male" = "#576fa0")
+
+# ============================================================================
+# PANEL A: Raincloud Plot - Centiloid by Sex & Amyloid Status (Separated)
+# ============================================================================
+
+# Prepare data
+omics_df <- omics_df %>%
+  mutate(
+    Sex_Amyloid = paste(Demographic.Sex, label, sep = "_"),
+    Sex_Amyloid = factor(Sex_Amyloid, 
+                         levels = c("Female_N", "Female_H", "Male_N", "Male_H"))
+  )
+
+# Create base plotting function to ensure consistency
+create_raincloud_plot <- function(data, group_label, show_y_label = TRUE) {
+  p <- ggplot(data, aes(x = Demographic.Sex, y = Centiloid, fill = Demographic.Sex)) +
+    # Individual points (jittered)
+    geom_jitter(aes(color = Demographic.Sex), 
+                width = 0.05, alpha = 0.5, size = 0.9) +
+    # Half-eye density plot
+    stat_halfeye(width = 0.2, .width = 0,
+                 justification = -0.79,
+                 point_colour = NA, alpha = 0.6) +
+    # Boxplot
+    geom_boxplot(position = position_nudge(x = 0.14),
+                 width = 0.1, outlier.size = 0,
+                 outlier.alpha = 0, alpha = 0.6) +
+    # Statistical comparison
+    stat_compare_means(
+      comparisons = list(c("Female", "Male")),
+      label = "p.signif",
+      method = "wilcox.test",
+      exact = FALSE,
+
+      # hjust = 0.5,
+      # size = 4
+      label.y = max(data$Centiloid, na.rm = TRUE),
+      size = 4
+    ) +
+    scale_fill_manual(values = sex_colors) +
+    scale_color_manual(values = sex_colors) +
+    labs(
+      x = "Sex",
+      y = if(show_y_label) "Centiloid Level" else "",
+      title = group_label
+    ) +
+    theme(
+      axis.ticks.x = element_line(linewidth = 0, color = "black"),
+      panel.background = element_rect(fill = "white", color = "white"),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      panel.grid.major.y = element_line(color = "#cfcece", linewidth = 0.25),
+      panel.grid.minor.y = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+      legend.position = "none",
+      axis.title.x = element_text(size = 13),
+      axis.title.y = element_text(size = 13),
+      axis.text.x = element_text(size = 12, hjust = 0.5),
+      axis.text.y = element_text(size = 12),
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 13)
+    )
+  
+  return(p)
+}
+
+# Filter data for Normal and High groups
+normal_data <- omics_df %>% filter(label == "N")
+high_data <- omics_df %>% filter(label == "H")
+
+# Create individual plots
+panel_a_normal <- create_raincloud_plot(
+  normal_data, 
+  "Normal Amyloid Status",
+  show_y_label = TRUE
+)
+
+# Add threshold line to Normal plot if needed
+panel_a_normal <- panel_a_normal +
+  geom_hline(yintercept = 20, linetype = "dashed", color = "grey30", linewidth = 0.8) +
+  annotate("text", x = 0.6, y = 20, label = "Threshold = 20", 
+           hjust = 0, vjust = -0.5, size = 3.5, color = "grey30")
+
+panel_a_high <- create_raincloud_plot(
+  high_data, 
+  "High Amyloid Status",
+  show_y_label = TRUE
+)
+
+# Add threshold line to High plot if needed
+panel_a_high <- panel_a_high +
+  geom_hline(yintercept = 20, linetype = "dashed", color = "grey30", linewidth = 0.8) +
+  annotate("text", x = 0.6, y = 20, label = "Threshold = 20", 
+           hjust = 0, vjust = -0.5, size = 3.5, color = "grey30")
+
+# Combine plots side by side
+panel_a_combined <- panel_a_normal + panel_a_high +
+  plot_annotation(
+    title = "A. Distribution of Centiloid Levels by Sex and Amyloid Status",
+    theme = theme(plot.title = element_text(face = "bold", size = 14, hjust = 0.5))
+  )
+
+# Display combined plot
+panel_a_combined
+
+# # Save individual plots
+# ggsave("../plots/Figure1_PanelA_Normal.pdf", panel_a_normal, width = 5, height = 6, units = "in")
+# ggsave("../plots/Figure1_PanelA_High.pdf", panel_a_high, width = 5, height = 6, units = "in")
+
+# Save combined plot
+ggsave("../plots/Figure1_PanelAB_Combined.pdf", panel_a_combined, width = 10, height = 6, units = "in")
+
+```
+Panel B - 
+```{r}
+sex_colors <- c("Female" = "#b57979", "Male" = "#576fa0")
+
+cor_female <- cor.test(omics_df$Age[omics_df$Demographic.Sex == "Female"], 
+                       omics_df$Centiloid[omics_df$Demographic.Sex == "Female"])
+cor_male <- cor.test(omics_df$Age[omics_df$Demographic.Sex == "Male"], 
+                     omics_df$Centiloid[omics_df$Demographic.Sex == "Male"])
+
+panel_c <- ggplot(omics_df, aes(x = Age, y = Centiloid, color = Demographic.Sex, fill = Demographic.Sex)) +
+  # Add regression lines with confidence intervals
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2, linewidth = 1.2) +
+  # Add points
+  geom_point(size = 3, alpha = 0.6) +
+  # Add correlation annotations
+  annotate("text", x = min(omics_df$Age, na.rm = TRUE) + 1, 
+           y = max(omics_df$Centiloid, na.rm = TRUE),
+           label = sprintf("Female: r = %.2f, p = %.3f", 
+                          cor_female$estimate, cor_female$p.value),
+           hjust = 0, size = 5, color = sex_colors["Female"]) +
+  annotate("text", x = min(omics_df$Age, na.rm = TRUE) + 1, 
+           y = max(omics_df$Centiloid, na.rm = TRUE) - 10,
+           label = sprintf("Male: r = %.2f, p = %.3f", 
+                          cor_male$estimate, cor_male$p.value),
+           hjust = 0, size = 5, color = sex_colors["Male"]) +
+  scale_color_manual(values = sex_colors) +
+  scale_fill_manual(values = sex_colors) +
+  labs(
+    x = "Age (Years)",
+    y = "Centiloid Level",
+    title = "C. Relationship Between Age and Centiloid Level by Sex",
+    color = "Sex",
+    fill = "Sex"
+  ) +
+  theme(
+    panel.background = element_rect(fill = "white", color = "white"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 13),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12)
+  )
+
+ggsave("../plots/Figure1_PanelC.pdf", panel_c, width = 10, height = 6, units = "in")
+```
+
+
+
+```{r}
+
+```
