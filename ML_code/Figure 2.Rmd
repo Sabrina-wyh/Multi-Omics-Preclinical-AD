@@ -18,21 +18,52 @@ source("plots.R")
 
 
 ```{r}
-omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_imputed.csv", na.strings = c("", "NA"), check.names = FALSE)
-names_df <- readxl::read_excel("../preprocessed_data/feature_names.xlsx")
+omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_clean_imputed.csv", na.strings = c("", "NA"), check.names = FALSE)
+names_df <- readxl::read_excel("../preprocessed_data/feature_names_clean.xlsx")
 
-keys                     <- names_df$keys |> na.omit()
-label_names              <- names_df$label_names |> na.omit()
-demographic_cols         <- names_df$demographic_cols |> na.omit()
-proteomic_cols           <- names_df$proteomics_cols |> na.omit()
-metabolomics_cols        <- names_df$metabolomics_cols |> na.omit()
-neuropsychological_cols  <- names_df$neuropsychological_cols |> na.omit()
+clean_feature_name <- function(x) {
+  sub("\\.[0-9]$", "", as.character(x))
+}
 
-feature_cols <- c(
-  na.omit(names_df$proteomics_cols),
-  na.omit(names_df$metabolomics_cols)
-  # na.omit(names_df$neuropsychological_cols)
-)
+clean_feature_vector <- function(x) {
+  x <- x[!is.na(x)]
+  unique(clean_feature_name(x))
+}
+
+normalise_sex <- function(x) {
+  x <- as.character(x)
+  ifelse(x %in% c("0", "Female"), "Female",
+         ifelse(x %in% c("1", "Male"), "Male", x))
+}
+
+normalise_label <- function(x) {
+  x <- as.character(x)
+  ifelse(x %in% c("0", "N"), "N",
+         ifelse(x %in% c("1", "H"), "H", x))
+}
+
+omics_df$Demographic.Sex <- factor(normalise_sex(omics_df$Demographic.Sex), levels = c("Female", "Male"))
+omics_df$label <- factor(normalise_label(omics_df$label), levels = c("N", "H"))
+
+keys                     <- clean_feature_vector(names_df$keys)
+label_names              <- clean_feature_vector(names_df$label_names)
+demographic_cols         <- clean_feature_vector(names_df$demographic_cols)
+proteomic_cols           <- clean_feature_vector(names_df$proteomics_cols)
+metabolomics_cols        <- clean_feature_vector(names_df$metabolomics_cols)
+neuropsychological_cols  <- clean_feature_vector(names_df$neuropsychological_cols)
+
+feature_cols <- unique(c(
+  proteomic_cols,
+  metabolomics_cols
+  # neuropsychological_cols
+))
+
+missing_feature_cols <- setdiff(feature_cols, colnames(omics_df))
+if (length(missing_feature_cols) > 0) {
+  warning("Feature columns missing after cleanup: ", paste(head(missing_feature_cols, 20), collapse = ", "))
+}
+feature_cols <- intersect(feature_cols, colnames(omics_df))
+stopifnot(length(feature_cols) > 0)
 
 # Define colors
 pca_colors <- c(
@@ -268,6 +299,7 @@ loadings_df_f_full <- data.frame(
   Loading = loadings_f_comp1,
   VIP = vip(plsda_f)[, 1]
 ) %>%
+  mutate(Feature = clean_feature_name(Feature)) %>%
   filter(VIP > 1) %>%  # Only important features
   arrange(desc(abs(Loading))) %>%
   slice_head(n = 20) %>%
@@ -314,6 +346,7 @@ loadings_df_m_full <- data.frame(
   Loading = loadings_m_comp1,
   VIP = vip(plsda_m)[, 1]
 ) %>%
+  mutate(Feature = clean_feature_name(Feature)) %>%
   filter(VIP > 1) %>%
   arrange(desc(abs(Loading))) %>%
   slice_head(n = 20) %>%
@@ -385,6 +418,7 @@ plsda_features_f <- data.frame(
   Direction = ifelse(loadings_f_comp1 > 0, "Higher in Amyloid+", "Higher in Amyloid-"),
   AbsLoading = abs(loadings_f_comp1)
 ) %>%
+  mutate(Feature = clean_feature_name(Feature)) %>%
   arrange(desc(VIP_Score))
 
 # Save to CSV
@@ -415,6 +449,7 @@ plsda_features_m <- data.frame(
   Direction = ifelse(loadings_m_comp1 > 0, "Higher in Amyloid+", "Higher in Amyloid-"),
   AbsLoading = abs(loadings_m_comp1)
 ) %>%
+  mutate(Feature = clean_feature_name(Feature)) %>%
   arrange(desc(VIP_Score))
 
 write.csv(plsda_features_m, 
@@ -450,12 +485,15 @@ cat("Mean VIP score:", round(mean(plsda_features_m$VIP_Score), 3), "\n")
 # 2. Run Analysis
 # ============================================================================
 res_overall <- calc_de_stats(omics_df, "label", feature_cols)
+res_overall <- res_overall %>% mutate(Feature = clean_feature_name(Feature))
 
 df_female <- omics_df %>% filter(Demographic.Sex == "Female")
 res_female <- calc_de_stats(df_female, "label", feature_cols)
+res_female <- res_female %>% mutate(Feature = clean_feature_name(Feature))
 
 df_male <- omics_df %>% filter(Demographic.Sex == "Male")
 res_male <- calc_de_stats(df_male, "label", feature_cols)
+res_male <- res_male %>% mutate(Feature = clean_feature_name(Feature))
 
 # ============================================================================
 # Save Results to CSV
@@ -505,12 +543,14 @@ print(p_overall)
 
 # --- Plot B: Female ---
 p_female  <- plot_volcano(res_female, "Female Specific", "#C83231", "#E5ACA8")
-ggsave("../plots/Figure2_PanelH_volcano_Female.pdf", p_female, width = 7, height = 6)
+# ggsave("../plots/Figure2_PanelH_volcano_Female.pdf", p_female, width = 7, height = 6)
+ggsave("../plots/Figure2_PanelH_volcano_Female_ppt.pdf", p_female, width = 6, height = 8)
 print(p_female)
 
 # --- Plot C: Male ---
 p_male    <- plot_volcano(res_male, "Male Specific", "#2E5DA5", "#94B3D1")
-ggsave("../plots/Figure2_PanelI_volcano_Male.pdf", p_male, width = 7, height = 6)
+# ggsave("../plots/Figure2_PanelI_volcano_Male.pdf", p_male, width = 7, height = 6)
+ggsave("../plots/Figure2_PanelI_volcano_Male_ppt.pdf", p_male, width = 6, height = 8)
 print(p_male)
 
 ```
@@ -523,8 +563,8 @@ library(grid)
 
 # --- From Volcano Plots (Univariate: P < 0.05) ---
 # We use the results dataframes created in the previous step
-list_volcano_F <- res_female$Feature[res_female$P_Value < 0.05]
-list_volcano_M <- res_male$Feature[res_male$P_Value < 0.05]
+list_volcano_F <- clean_feature_name(res_female$Feature[res_female$P_Value < 0.05])
+list_volcano_M <- clean_feature_name(res_male$Feature[res_male$P_Value < 0.05])
 
 # --- From PLS-DA (Multivariate: VIP > 1.2) ---
 # VIP > 1 is standard, but > 1.2 is better for "strong" drivers in N=90
@@ -534,8 +574,8 @@ list_volcano_M <- res_male$Feature[res_male$P_Value < 0.05]
 vip_F <- vip(plsda_f)[, 1] 
 vip_M <- vip(plsda_m)[, 1]
 
-list_plsda_F <- names(vip_F)[vip_F > 1.2]
-list_plsda_M <- names(vip_M)[vip_M > 1.2]
+list_plsda_F <- clean_feature_name(names(vip_F)[vip_F > 1.2])
+list_plsda_M <- clean_feature_name(names(vip_M)[vip_M > 1.2])
 
 # Your data
 lt = list(
@@ -661,6 +701,7 @@ vip_df_all <- data.frame(
   Feature = rownames(vip_all),
   VIP = vip_all[, 1]
 ) %>%
+  mutate(Feature = clean_feature_name(Feature)) %>%
   arrange(desc(VIP)) %>%
   slice_head(n = 20)  # Top 20 features
 
@@ -682,6 +723,7 @@ vip_df_f <- data.frame(
   Feature = rownames(vip_f),
   VIP = vip_f[, 1]
 ) %>%
+  mutate(Feature = clean_feature_name(Feature)) %>%
   arrange(desc(VIP)) %>%
   slice_head(n = 20)
 
@@ -703,6 +745,7 @@ vip_df_m <- data.frame(
   Feature = rownames(vip_m),
   VIP = vip_m[, 1]
 ) %>%
+  mutate(Feature = clean_feature_name(Feature)) %>%
   arrange(desc(VIP)) %>%
   slice_head(n = 20)
 
@@ -722,7 +765,7 @@ plot_vip_m <- ggplot(vip_df_m, aes(x = reorder(Feature, VIP), y = VIP)) +
 vip_combined <- plot_vip_all / (plot_vip_f | plot_vip_m)
 print(vip_combined)
 
-ggsave("VIP_scores.png", vip_combined, width = 12, height = 10, dpi = 300)
+ggsave("../plots/VIP_scores.png", vip_combined, width = 12, height = 10, dpi = 300)
 ```
 
 

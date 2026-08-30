@@ -11,7 +11,8 @@ library(missRanger)
 
 
 ```{r}
-omics_with_aibl <- read.csv("../preprocessed_data/omics_aibl_demo.csv", na.strings = c("", "NA"), check.names = FALSE)
+# omics_with_aibl <- read.csv("../preprocessed_data/omics_aibl_demo.csv", na.strings = c("", "NA"), check.names = FALSE)
+omics_with_aibl <- read.csv("../preprocessed_data/omics_aibl_demo_clean.csv", na.strings = c("", "NA"), check.names = FALSE)
 ```
 
 ```{r}
@@ -95,6 +96,6 @@ for (col in cols_to_exclude) {
 
 
 ```{r}
-write.csv(imputed_data, "../preprocessed_data/omics_aibl_demo_imputed.csv", row.names = FALSE)
+write.csv(imputed_data, "../preprocessed_data/omics_aibl_demo_clean_imputed.csv", row.names = FALSE)
 
 ```

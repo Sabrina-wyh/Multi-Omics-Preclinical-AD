@@ -5,8 +5,41 @@ date: "2024-10-22"
 output: pdf_document
 ---
 
+## Figure 1. Cohort Structure and Amyloid Burden
+
+### Methods
+
+The cleaned, imputed analysis table (`omics_aibl_demo_clean_imputed.csv`) was used for Figure 1. Sex and amyloid labels were harmonized to Female/Male and amyloid-normal/amyloid-high groups before plotting. Panel A displays Centiloid distributions by sex within amyloid-normal and amyloid-high groups using raincloud plots with individual observations, half-density summaries, and boxplots. Panel C evaluates the association between age and Centiloid separately by sex using linear regression and Pearson correlation.
+
+### Results
+
+The final figure summarizes the 90-participant modelling cohort, including 50 women and 40 men. Amyloid status was balanced by sex: women included 31 amyloid-normal and 19 amyloid-high participants, and men included 24 amyloid-normal and 16 amyloid-high participants. Centiloid values separated the amyloid-normal and amyloid-high groups cleanly, while within-status comparisons showed no strong sex imbalance in amyloid burden. Age was not strongly correlated with Centiloid in women or men, supporting subsequent sex-stratified modelling rather than age-driven separation.
+
+### Figure Legend
+
+**Figure 1. Participant amyloid burden and age associations.** Panel A shows Centiloid distributions by sex within amyloid-normal and amyloid-high groups. Points represent individual participants; half-eye densities and boxplots summarize the distribution. The dashed horizontal line indicates the approximate amyloid-positivity threshold. Panel C shows sex-stratified associations between age and Centiloid with linear regression fits and Pearson correlation annotations.
+
 ```{r}
-omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_imputed.csv")
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+dir.create("../plots", showWarnings = FALSE, recursive = TRUE)
+
+omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_clean_imputed.csv", na.strings = c("", "NA"), check.names = FALSE)
+# omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_imputed_clean.csv", na.strings = c("", "NA"), check.names = FALSE)
+
+normalise_sex <- function(x) {
+  x <- as.character(x)
+  ifelse(x %in% c("0", "Female"), "Female",
+         ifelse(x %in% c("1", "Male"), "Male", x))
+}
+
+normalise_label <- function(x) {
+  x <- as.character(x)
+  ifelse(x %in% c("0", "N"), "N",
+         ifelse(x %in% c("1", "H"), "H", x))
+}
+
+omics_df$Demographic.Sex <- factor(normalise_sex(omics_df$Demographic.Sex), levels = c("Female", "Male"))
+omics_df$label <- factor(normalise_label(omics_df$label), levels = c("N", "H"))
 ```
 
 
@@ -93,32 +126,32 @@ high_data <- omics_df %>% filter(label == "H")
 # Create individual plots
 panel_a_normal <- create_raincloud_plot(
   normal_data, 
-  "Normal Amyloid Status",
+  "Amyloid-normal",
   show_y_label = TRUE
 )
 
 # Add threshold line to Normal plot if needed
 panel_a_normal <- panel_a_normal +
   geom_hline(yintercept = 20, linetype = "dashed", color = "grey30", linewidth = 0.8) +
-  annotate("text", x = 0.6, y = 20, label = "Threshold = 20", 
+  annotate("text", x = 0.6, y = 20, label = "Approx. threshold = 20", 
            hjust = 0, vjust = -0.5, size = 3.5, color = "grey30")
 
 panel_a_high <- create_raincloud_plot(
   high_data, 
-  "High Amyloid Status",
+  "Amyloid-high",
   show_y_label = TRUE
 )
 
 # Add threshold line to High plot if needed
 panel_a_high <- panel_a_high +
   geom_hline(yintercept = 20, linetype = "dashed", color = "grey30", linewidth = 0.8) +
-  annotate("text", x = 0.6, y = 20, label = "Threshold = 20", 
+  annotate("text", x = 0.6, y = 20, label = "Approx. threshold = 20", 
            hjust = 0, vjust = -0.5, size = 3.5, color = "grey30")
 
 # Combine plots side by side
 panel_a_combined <- panel_a_normal + panel_a_high +
   plot_annotation(
-    title = "A. Distribution of Centiloid Levels by Sex and Amyloid Status",
+    title = "A. Centiloid Distribution by Sex and Amyloid Status",
     theme = theme(plot.title = element_text(face = "bold", size = 14, hjust = 0.5))
   )
 
@@ -133,13 +166,17 @@ panel_a_combined
 ggsave("../plots/Figure1_PanelAB_Combined.pdf", panel_a_combined, width = 10, height = 6, units = "in")
 
 ```
-Panel B - 
+Panel C - Age and Centiloid
 ```{r}
 sex_colors <- c("Female" = "#b57979", "Male" = "#576fa0")
 
-cor_female <- cor.test(omics_df$Age[omics_df$Demographic.Sex == "Female"], 
+# cor_female <- cor.test(omics_df$Age[omics_df$Demographic.Sex == "Female"], 
+#                        omics_df$Centiloid[omics_df$Demographic.Sex == "Female"])
+# cor_male <- cor.test(omics_df$Age[omics_df$Demographic.Sex == "Male"], 
+#                      omics_df$Centiloid[omics_df$Demographic.Sex == "Male"])
+cor_female <- cor.test(omics_df$Age[omics_df$Demographic.Sex == "Female"],
                        omics_df$Centiloid[omics_df$Demographic.Sex == "Female"])
-cor_male <- cor.test(omics_df$Age[omics_df$Demographic.Sex == "Male"], 
+cor_male <- cor.test(omics_df$Age[omics_df$Demographic.Sex == "Male"],
                      omics_df$Centiloid[omics_df$Demographic.Sex == "Male"])
 
 panel_c <- ggplot(omics_df, aes(x = Age, y = Centiloid, color = Demographic.Sex, fill = Demographic.Sex)) +
@@ -180,6 +217,7 @@ panel_c <- ggplot(omics_df, aes(x = Age, y = Centiloid, color = Demographic.Sex,
     axis.text.y = element_text(size = 12)
   )
 
+panel_c
 ggsave("../plots/Figure1_PanelC.pdf", panel_c, width = 10, height = 6, units = "in")
 ```
 

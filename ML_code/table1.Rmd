@@ -10,7 +10,8 @@ library(ggplot2)
 ```
 
 ```{r}
-omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_imputed.csv")
+# omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_imputed.csv")
+omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_clean_imputed.csv")
 ```
 
 

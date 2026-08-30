@@ -1,0 +1,832 @@
+---
+title: "plots"
+author: "Yihan Wang"
+date: "2024-10-22"
+output: pdf_document
+---
+```{r}
+# rm(list=ls())
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+library(tidyverse)
+library(MASS)      # LDA
+library(patchwork)
+library(ggplot2)
+library(mixOmics)
+library(dplyr)
+source("plots.R")
+dir.create("../plots", showWarnings = FALSE, recursive = TRUE)
+dir.create("../results", showWarnings = FALSE, recursive = TRUE)
+```
+
+
+```{r}
+omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_clean_imputed.csv", na.strings = c("", "NA"), check.names = FALSE)
+names_df <- readxl::read_excel("../preprocessed_data/feature_names_clean.xlsx")
+
+clean_feature_name <- function(x) {
+  sub("\\.[0-9]$", "", as.character(x))
+}
+
+clean_feature_vector <- function(x) {
+  x <- x[!is.na(x)]
+  unique(clean_feature_name(x))
+}
+
+# Manuscript/display renaming only. Raw feature IDs are kept for matching,
+# modelling, and exported reproducibility columns.
+manuscript_feature_name_map <- c(
+  "2_5-Dihydroxypyridine" = "dihydroxypyridine",
+  "2,5-Dihydroxypyridine" = "dihydroxypyridine",
+  "6beta-acetoxy-24-methylcholestan-3beta_5alpha_22R_24-tetrol" = "acetylated polyhydroxy-ergostanoid",
+  "6beta-acetoxy-24-methylcholestan-3beta,5alpha,22R,24-tetrol" = "acetylated polyhydroxy-ergostanoid",
+  # "7beta-acetoxy-gorgostan-3beta_5alpha_6beta-triol" = "acetylated polyhydroxy-ergostanoid",
+  "6-Butyryl-5_7-dihydroxy-8-(3'_3'-dimethylallyl)-4-phenylcoumarin" = "4-phenylcoumarin",
+  "6-Butyryl-5,7-dihydroxy-8-(3'_3'-dimethylallyl)-4-phenylcoumarin" = "4-phenylcoumarin",
+  "Aminoadipic acid" = "aminoadipic acid",
+  "cyclopentanehexanoic acid" = "oxo-hexadecanoic acid",
+  "Cyclopentanehexanoic acid" = "oxo-hexadecanoic acid",
+  "Cys/Asp/Asp/Thr/Thr" = "sulfur-containing pentapeptide",
+  "DG(22:5/22:6/0:0)" = "DG(44:11)",
+  "Dihomocholic acid" = "dihomocholic acid",
+  "epithio-seco-cholestadienetriol S_S-dioxide" = "25-hydroxyvitamin D3 3-sulfate",
+  "Epithio-seco-cholestadienetriol S,S-dioxide" = "25-hydroxyvitamin D3 3-sulfate",
+  "FA hydroxy(7:0)" = "hydroxyheptanoic acid",
+  "Methylimidazole acetaldehyde (MIA)" = "methylimidazole acetaldehyde (MIA)",
+  "N-acetyl-L-2-aminoadipate(2-)" = "N-acetyl-aminoadipic acid",
+  "Pyrroline hydroxycarboxylic acid" = "pyrroline hydroxycarboxylic acid",
+  "Stoloniferone F" = "unsaturated polyhydroxy-ergostanoid",
+  "Sulfonic acid" = "sulfonic acid",
+  "{[-3-phenylprop-2-en-1-yl]oxy}sulfonic acid" = "sulfonic acid",
+  "3-Isopropyl-2-methoxy-5-methylpyrazine" = "methoxypyrazine",
+  "Quinic acid" = "quinic acid",
+  "Deoxyribose" = "deoxypentose",
+  "Guanosine" = "guanosine"
+)
+
+manuscript_feature_name <- function(x) {
+  x <- clean_feature_name(x)
+  out <- unname(manuscript_feature_name_map[x])
+  ifelse(is.na(out), x, out)
+}
+
+add_feature_display <- function(df, feature_col = "Feature") {
+  df %>%
+    mutate(Feature_Display = manuscript_feature_name(.data[[feature_col]]))
+}
+
+use_feature_display_for_plot <- function(df) {
+  df %>%
+    add_feature_display() %>%
+    mutate(Feature_ID = Feature, Feature = Feature_Display)
+}
+
+normalise_sex <- function(x) {
+  x <- as.character(x)
+  ifelse(x %in% c("0", "Female"), "Female",
+         ifelse(x %in% c("1", "Male"), "Male", x))
+}
+
+normalise_label <- function(x) {
+  x <- as.character(x)
+  ifelse(x %in% c("0", "N"), "N",
+         ifelse(x %in% c("1", "H"), "H", x))
+}
+
+omics_df$Demographic.Sex <- factor(normalise_sex(omics_df$Demographic.Sex), levels = c("Female", "Male"))
+omics_df$label <- factor(normalise_label(omics_df$label), levels = c("N", "H"))
+
+keys                     <- clean_feature_vector(names_df$keys)
+label_names              <- clean_feature_vector(names_df$label_names)
+demographic_cols         <- clean_feature_vector(names_df$demographic_cols)
+proteomic_cols           <- clean_feature_vector(names_df$proteomics_cols)
+metabolomics_cols        <- clean_feature_vector(names_df$metabolomics_cols)
+neuropsychological_cols  <- clean_feature_vector(names_df$neuropsychological_cols)
+
+feature_cols <- unique(c(
+  proteomic_cols,
+  metabolomics_cols
+  # neuropsychological_cols
+))
+
+univariate_p_cutoff <- 0.05
+univariate_selection_label <- "Univariate volcano p < 0.05"
+plsda_vip_cutoff <- 1
+plsda_selection_label <- "PLS-DA VIP > 1"
+
+feature_annotation <- bind_rows(
+  tibble(Feature = proteomic_cols, Omics_Type = "Proteomics"),
+  tibble(Feature = metabolomics_cols, Omics_Type = "Metabolomics")
+) %>%
+  filter(!is.na(Feature), Feature != "") %>%
+  group_by(Feature) %>%
+  summarise(Omics_Type = paste(sort(unique(Omics_Type)), collapse = "/"), .groups = "drop")
+
+add_omics_type <- function(df) {
+  df %>%
+    mutate(Feature = clean_feature_name(Feature)) %>%
+    left_join(feature_annotation, by = "Feature") %>%
+    mutate(
+      Omics_Type = ifelse(is.na(Omics_Type), "Unmapped", Omics_Type),
+      Feature_Display = manuscript_feature_name(Feature)
+    )
+}
+
+summarise_selected_counts <- function(df, group_name, analysis_name, direction_col) {
+  df %>%
+    count(
+      Analysis = analysis_name,
+      Group = group_name,
+      Omics_Type,
+      Direction = .data[[direction_col]],
+      name = "Selected_Features"
+    ) %>%
+    arrange(Analysis, Group, Omics_Type, Direction)
+}
+
+missing_feature_cols <- setdiff(feature_cols, colnames(omics_df))
+if (length(missing_feature_cols) > 0) {
+  warning("Feature columns missing after cleanup: ", paste(head(missing_feature_cols, 20), collapse = ", "))
+}
+feature_cols <- intersect(feature_cols, colnames(omics_df))
+stopifnot(length(feature_cols) > 0)
+
+# Define colors
+pca_colors <- c(
+  "Female-N" = "#E5ACA8",
+  "Female-H" = "#C83231",
+  "Male-N"   = "#94B3D1",
+  "Male-H"   = "#2E5DA5"
+)
+
+amyloid_colors <- c("N" = "#C83231", "H" = "#2E5DA5")
+
+# ============================================================================
+# Panel A: PCA - Full cohort unsupervised structure
+# ============================================================================
+
+# Prepare data
+X_all <- omics_df[, feature_cols] %>% as.matrix()
+X_all_scaled <- scale(X_all)
+
+# Run PCA
+pca_all <- pca(X_all_scaled, ncomp = 2, center = FALSE, scale = FALSE)
+
+# Create dataframe for plotting
+pca_df_all <- data.frame(
+  PC1 = pca_all$variates$X[, 1],
+  PC2 = pca_all$variates$X[, 2],
+  Sex = omics_df$Demographic.Sex,
+  Amyloid = omics_df$label,
+  Sex_Amyloid = paste(omics_df$Demographic.Sex, omics_df$label, sep = "-")
+)
+
+# Calculate variance explained
+pve_all <- pca_all$prop_expl_var$X * 100
+
+# Plot Panel A
+panel_A <- ggplot(pca_df_all, aes(PC1, PC2, color = Sex_Amyloid)) +
+  geom_point(size = 5, alpha = 0.85) +  # Increased size from 3 to 5
+  scale_color_manual(
+    values = pca_colors,
+    name = NULL,  # Remove "Group" title
+    labels = c("Female-N" = "Female Amyloid-",
+               "Female-H" = "Female Amyloid+",
+               "Male-N" = "Male Amyloid-",
+               "Male-H" = "Male Amyloid+")
+  ) +
+  labs(
+    title = "PCA - Full Cohort",
+    subtitle = "Unsupervised multi-omic structure",
+    x = paste0("PC1 (", round(pve_all[1], 1), "%)"),
+    y = paste0("PC2 (", round(pve_all[2], 1), "%)")
+  ) +
+  theme_classic(base_size = 15) +  # Increased from 13 to 15
+  theme(
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    plot.title = element_text(face = "bold", size = 17),  # Increased by 2
+    plot.subtitle = element_text(size = 12, color = "gray30"),
+    axis.title = element_text(size = 15),  # Increased by 2
+    axis.text = element_text(size = 13),   # Increased by 2
+    legend.text = element_text(size = 12)  # Increased by 2
+  )
+
+# ============================================================================
+# Panel B: PLS-DA - Full cohort supervised amyloid pattern
+# ============================================================================
+
+# Run PLS-DA
+plsda_all <- plsda(X_all_scaled, omics_df$label, ncomp = 2)
+
+# Create dataframe for plotting
+plsda_df_all <- data.frame(
+  Comp1 = plsda_all$variates$X[, 1],
+  Comp2 = plsda_all$variates$X[, 2],
+  Sex = omics_df$Demographic.Sex,
+  Amyloid = omics_df$label,
+  Sex_Amyloid = paste(omics_df$Demographic.Sex, omics_df$label, sep = "-")
+)
+
+# Calculate variance explained
+pve_plsda_all <- plsda_all$prop_expl_var$X * 100
+
+# Plot Panel B
+panel_B <- ggplot(plsda_df_all, aes(Comp1, Comp2, color = Sex_Amyloid)) +
+  geom_point(size = 5, alpha = 0.85) +  # Increased size from 3 to 5
+  scale_color_manual(
+    values = pca_colors,
+    name = NULL,  # Remove "Group" title
+    labels = c("Female-N" = "Female Amyloid-",
+               "Female-H" = "Female Amyloid+",
+               "Male-N" = "Male Amyloid-",
+               "Male-H" = "Male Amyloid+")
+  ) +
+  labs(
+    title = "PLS-DA - Full Cohort",
+    x = paste0("Component 1 (", round(pve_plsda_all[1], 1), "%)"),
+    y = paste0("Component 2 (", round(pve_plsda_all[2], 1), "%)")
+  ) +
+  theme_classic(base_size = 15) +  # Increased from 13 to 15
+  theme(
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    plot.title = element_text(face = "bold", size = 17),  # Increased by 2
+    axis.title = element_text(size = 15),  # Increased by 2
+    axis.text = element_text(size = 13),   # Increased by 2
+    legend.text = element_text(size = 12)  # Increased by 2
+  )
+
+# ============================================================================
+# Panel C: PLS-DA - Female
+# ============================================================================
+
+# Filter female data
+df_f <- omics_df %>% filter(Demographic.Sex == "Female")
+X_f <- df_f[, feature_cols] %>% as.matrix()
+X_f_scaled <- scale(X_f)
+
+# Run PLS-DA for females
+plsda_f <- plsda(X_f_scaled, df_f$label, ncomp = 2)
+
+# Create dataframe
+plsda_df_f <- data.frame(
+  Comp1 = plsda_f$variates$X[, 1],
+  Comp2 = plsda_f$variates$X[, 2],
+  Amyloid = df_f$label
+)
+
+# Calculate variance explained
+pve_f <- plsda_f$prop_expl_var$X * 100
+
+# Plot Panel C
+panel_C <- ggplot(plsda_df_f, aes(Comp1, Comp2, color = Amyloid)) +
+  geom_point(size = 5, alpha = 0.85) +  # Increased size from 3 to 5
+  scale_color_manual(
+    values = amyloid_colors,
+    name = NULL,  # Remove "Amyloid" title
+    labels = c("N" = "Negative", "H" = "Positive")
+  ) +
+  labs(
+    title = "PLS-DA - Female",
+    x = paste0("Component 1 (", round(pve_f[1], 1), "%)"),
+    y = paste0("Component 2 (", round(pve_f[2], 1), "%)")
+  ) +
+  theme_classic(base_size = 15) +  # Increased from 13 to 15
+  theme(
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    plot.title = element_text(face = "bold", size = 17),  # Increased by 2
+    axis.title = element_text(size = 15),  # Increased by 2
+    axis.text = element_text(size = 13),   # Increased by 2
+    legend.text = element_text(size = 13)  # Increased by 2
+  )
+
+# ============================================================================
+# Panel D: PLS-DA - Male
+# ============================================================================
+
+# Filter male data
+df_m <- omics_df %>% filter(Demographic.Sex == "Male")
+X_m <- df_m[, feature_cols] %>% as.matrix()
+X_m_scaled <- scale(X_m)
+
+# Run PLS-DA for males
+plsda_m <- plsda(X_m_scaled, df_m$label, ncomp = 2)
+
+# Create dataframe
+plsda_df_m <- data.frame(
+  Comp1 = plsda_m$variates$X[, 1],
+  Comp2 = plsda_m$variates$X[, 2],
+  Amyloid = df_m$label
+)
+
+# Calculate variance explained
+pve_m <- plsda_m$prop_expl_var$X * 100
+
+# Plot Panel D
+panel_D <- ggplot(plsda_df_m, aes(Comp1, Comp2, color = Amyloid)) +
+  geom_point(size = 5, alpha = 0.85) +  # Increased size from 3 to 5
+  scale_color_manual(
+    values = amyloid_colors,
+    name = NULL,  # Remove "Amyloid" title
+    labels = c("N" = "Negative", "H" = "Positive")
+  ) +
+  labs(
+    title = "PLS-DA - Male",
+    x = paste0("Component 1 (", round(pve_m[1], 1), "%)"),
+    y = paste0("Component 2 (", round(pve_m[2], 1), "%)")
+  ) +
+  theme_classic(base_size = 15) +  # Increased from 13 to 15
+  theme(
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    plot.title = element_text(face = "bold", size = 17),  # Increased by 2
+    axis.title = element_text(size = 15),  # Increased by 2
+    axis.text = element_text(size = 13),   # Increased by 2
+    legend.text = element_text(size = 13)  # Increased by 2
+  )
+
+# ============================================================================
+# Combine all panels
+# ============================================================================
+
+combined_plot <- (panel_A | panel_B) / (panel_C | panel_D)
+
+# Display
+print(combined_plot)
+
+# Save
+ggsave(
+  "../plots/Figure2_PanelABCD_PCA_PLSDA_combined.png",
+  combined_plot,
+  width = 14,
+  height = 14,  # Increased height to accommodate larger elements
+  dpi = 300,
+  bg = "white"
+)
+
+# Optional: Save individual panels
+ggsave("../plots/Figure2_panelA_PCA_combined.pdf", panel_A, width = 7, height = 6.5)
+ggsave("../plots/Figure2_panelB_PLSDA_combined.pdf", panel_B, width = 7, height = 6.5)
+ggsave("../plots/Figure2_panelC_PLSDA_female.pdf", panel_C, width = 7, height = 6.5)
+ggsave("../plots/Figure2_panelD_PLSDA_male.pdf", panel_D, width = 7, height = 6.5)
+```
+
+
+```{r}
+# ============================================================================
+# Loading plot with clear directional interpretation - SEPARATE PDFs
+# Legend at BOTTOM
+# ============================================================================
+
+# For Female
+loadings_f_comp1 <- plsda_f$loadings$X[, 1]  # Component 1
+loadings_df_f_full <- data.frame(
+  Feature = names(loadings_f_comp1),
+  Loading = loadings_f_comp1,
+  VIP = vip(plsda_f)[, 1]
+) %>%
+  mutate(Feature = clean_feature_name(Feature)) %>%
+  add_feature_display() %>%
+  filter(VIP > 1) %>%  # Only important features
+  arrange(desc(abs(Loading))) %>%
+  slice_head(n = 30) %>%
+  mutate(
+    Direction = ifelse(Loading > 0, "Higher in Amyloid+", "Higher in Amyloid-"),
+    AbsLoading = abs(Loading)
+  )
+
+plot_direction_f <- ggplot(loadings_df_f_full, 
+                           aes(x = reorder(Feature_Display, Loading), 
+                               y = Loading, 
+                               fill = Direction)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(
+    values = c("Higher in Amyloid+" = "#C83231", 
+               "Higher in Amyloid-" = "#E5ACA8"),
+    name = "Association"
+  ) +
+  coord_flip() +
+  labs(
+    title = "Loading on Component 1 (Female)",
+    x = "",
+    y = "",
+    # y = "Loading on Component 1",
+    subtitle = "Positive = elevated in amyloid+; Negative = elevated in amyloid-"
+  ) +
+  theme_classic(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    plot.subtitle = element_text(size = 9, color = "gray30"),
+    legend.position = "none" 
+    # legend.position = "bottom",
+    # legend.direction = "horizontal"
+  )
+
+# Save Female plot as separate PDF
+ggsave("../plots/Figure2_PanelE_feature_directions_female.pdf", plot_direction_f, 
+       width = 8, height = 8, device = "pdf")
+
+# For Male
+loadings_m_comp1 <- plsda_m$loadings$X[, 1]
+loadings_df_m_full <- data.frame(
+  Feature = names(loadings_m_comp1),
+  Loading = loadings_m_comp1,
+  VIP = vip(plsda_m)[, 1]
+) %>%
+  mutate(Feature = clean_feature_name(Feature)) %>%
+  add_feature_display() %>%
+  filter(VIP > 1) %>%
+  arrange(desc(abs(Loading))) %>%
+  slice_head(n = 30) %>%
+  mutate(
+    Direction = ifelse(Loading > 0, "Higher in Amyloid+", "Higher in Amyloid-"),
+    AbsLoading = abs(Loading)
+  )
+
+plot_direction_m <- ggplot(loadings_df_m_full, 
+                           aes(x = reorder(Feature_Display, Loading), 
+                               y = Loading, 
+                               fill = Direction)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(
+    values = c("Higher in Amyloid+" = "#2E5DA5", 
+               "Higher in Amyloid-" = "#94B3D1"),
+    name = ""
+  ) +
+  coord_flip() +
+  labs(
+    title = "Loading on Component 1 (Male)",
+    x = "",
+    y = "",
+    # y = "Loading on Component 1",
+    subtitle = "Positive = elevated in amyloid+; Negative = elevated in amyloid-"
+  ) +
+  theme_classic(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    plot.subtitle = element_text(size = 9, color = "gray30"),
+    legend.position = "none" 
+    # legend.position = "bottom",
+    # legend.direction = "horizontal"
+  )
+
+# Save Male plot as separate PDF
+ggsave("../plots/Figure2_PanelF_feature_directions_male.pdf", plot_direction_m, 
+       width = 8, height = 8, device = "pdf")
+
+# Also display them
+print(plot_direction_f)
+print(plot_direction_m)
+
+# Optional: Save combined version with shared legend at bottom
+direction_combined <- plot_direction_f | plot_direction_m
+direction_combined <- direction_combined + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "bottom")
+
+ggsave("../plots/Figure2_feature_directions_combined.pdf", direction_combined, 
+       width = 16, height = 8, device = "pdf")
+```
+
+```{r}
+loadings_df_m_full %>% 
+  count(Feature_Display) %>% 
+  filter(n > 1)
+```
+
+
+
+```{r}
+# ============================================================================
+# Extract and save PLS-DA features with VIP scores - FEMALE
+# ============================================================================
+
+# Get VIP scores for all features
+vip_scores_f <- vip(plsda_f)[, 1]  # Component 1 VIP scores
+loadings_f_comp1 <- plsda_f$loadings$X[, 1]  # Component 1 loadings
+
+# Create comprehensive dataframe
+plsda_features_f <- data.frame(
+  Feature = names(vip_scores_f),
+  VIP_Score = vip_scores_f,
+  Loading_Comp1 = loadings_f_comp1,
+  Selected = ifelse(vip_scores_f > plsda_vip_cutoff, "Yes", "No"),
+  Direction = ifelse(loadings_f_comp1 > 0, "Higher in Amyloid+", "Higher in Amyloid-"),
+  AbsLoading = abs(loadings_f_comp1)
+) %>%
+  add_omics_type() %>%
+  arrange(desc(VIP_Score))
+
+# Save to CSV
+write.csv(plsda_features_f, 
+          "../results/plsda_features_female_vip.csv", 
+          row.names = FALSE)
+
+# Also save only selected features (VIP > 1)
+plsda_features_f_selected <- plsda_features_f %>%
+  filter(Selected == "Yes")
+
+write.csv(plsda_features_f_selected, 
+          "../results/plsda_features_female_selected.csv", 
+          row.names = FALSE)
+
+# ============================================================================
+# Extract and save PLS-DA features with VIP scores - MALE
+# ============================================================================
+
+vip_scores_m <- vip(plsda_m)[, 1]
+loadings_m_comp1 <- plsda_m$loadings$X[, 1]
+
+plsda_features_m <- data.frame(
+  Feature = names(vip_scores_m),
+  VIP_Score = vip_scores_m,
+  Loading_Comp1 = loadings_m_comp1,
+  Selected = ifelse(vip_scores_m > plsda_vip_cutoff, "Yes", "No"),
+  Direction = ifelse(loadings_m_comp1 > 0, "Higher in Amyloid+", "Higher in Amyloid-"),
+  AbsLoading = abs(loadings_m_comp1)
+) %>%
+  add_omics_type() %>%
+  arrange(desc(VIP_Score))
+
+write.csv(plsda_features_m, 
+          "../results/plsda_features_male_vip.csv", 
+          row.names = FALSE)
+
+plsda_features_m_selected <- plsda_features_m %>%
+  filter(Selected == "Yes")
+
+write.csv(plsda_features_m_selected, 
+          "../results/plsda_features_male_selected.csv", 
+          row.names = FALSE)
+
+# ============================================================================
+# Optional: Print summary statistics
+# ============================================================================
+
+cat("\n=== FEMALE PLS-DA Summary ===\n")
+cat("Total features:", nrow(plsda_features_f), "\n")
+cat("Features with VIP > 1:", sum(plsda_features_f$Selected == "Yes"), "\n")
+cat("Mean VIP score:", round(mean(plsda_features_f$VIP_Score), 3), "\n")
+
+cat("\n=== MALE PLS-DA Summary ===\n")
+cat("Total features:", nrow(plsda_features_m), "\n")
+cat("Features with VIP > 1:", sum(plsda_features_m$Selected == "Yes"), "\n")
+cat("Mean VIP score:", round(mean(plsda_features_m$VIP_Score), 3), "\n")
+
+plsda_selection_summary <- bind_rows(
+  summarise_selected_counts(plsda_features_f_selected, "Female", plsda_selection_label, "Direction"),
+  summarise_selected_counts(plsda_features_m_selected, "Male", plsda_selection_label, "Direction")
+)
+
+write.csv(plsda_selection_summary,
+          "../results/Figure2_PLSDA_selected_counts_by_sex_omics_direction.csv",
+          row.names = FALSE)
+
+knitr::kable(
+  plsda_selection_summary,
+  caption = "PLS-DA selected feature counts by sex, omics layer, and direction."
+)
+```
+
+
+
+```{r}
+# ============================================================================
+# 2. Run Analysis
+# ============================================================================
+res_overall <- calc_de_stats(omics_df, "label", feature_cols)
+res_overall <- res_overall %>% add_omics_type()
+
+df_female <- omics_df %>% filter(Demographic.Sex == "Female")
+res_female <- calc_de_stats(df_female, "label", feature_cols)
+res_female <- res_female %>% add_omics_type()
+
+df_male <- omics_df %>% filter(Demographic.Sex == "Male")
+res_male <- calc_de_stats(df_male, "label", feature_cols)
+res_male <- res_male %>% add_omics_type()
+
+# ============================================================================
+# Save Results to CSV
+# ============================================================================
+# # Create results directory if it doesn't exist
+# dir.create("../results", showWarnings = FALSE)
+
+# Save with sorted by P-value
+write.csv(res_overall %>% arrange(P_Value), 
+          "../results/DE_results_Overall.csv", 
+          row.names = FALSE)
+
+write.csv(res_female %>% arrange(P_Value), 
+          "../results/DE_results_Female.csv", 
+          row.names = FALSE)
+
+write.csv(res_male %>% arrange(P_Value), 
+          "../results/DE_results_Male.csv", 
+          row.names = FALSE)
+
+# Save summary of significant features
+sig_summary <- data.frame(
+  Analysis = c("Overall", "Female", "Male"),
+  Total_Features = c(nrow(res_overall), nrow(res_female), nrow(res_male)),
+  Significant_Up = c(
+    sum(res_overall$Significance == "Up"),
+    sum(res_female$Significance == "Up"),
+    sum(res_male$Significance == "Up")
+  ),
+  Significant_Down = c(
+    sum(res_overall$Significance == "Down"),
+    sum(res_female$Significance == "Down"),
+    sum(res_male$Significance == "Down")
+  )
+)
+
+write.csv(sig_summary, "../results/DE_summary.csv", row.names = FALSE)
+
+univariate_selection_summary <- bind_rows(
+  summarise_selected_counts(res_overall %>% filter(P_Value < univariate_p_cutoff, Significance %in% c("Up", "Down")), "Full Cohort", univariate_selection_label, "Significance"),
+  summarise_selected_counts(res_female %>% filter(P_Value < univariate_p_cutoff, Significance %in% c("Up", "Down")), "Female", univariate_selection_label, "Significance"),
+  summarise_selected_counts(res_male %>% filter(P_Value < univariate_p_cutoff, Significance %in% c("Up", "Down")), "Male", univariate_selection_label, "Significance")
+)
+
+univariate_total_summary <- univariate_selection_summary %>%
+  group_by(Analysis, Group, Omics_Type) %>%
+  summarise(Selected_Features = sum(Selected_Features), .groups = "drop") %>%
+  mutate(Direction = "Total") %>%
+  dplyr::select(Analysis, Group, Omics_Type, Direction, Selected_Features)
+
+univariate_selection_summary <- bind_rows(
+  univariate_selection_summary,
+  univariate_total_summary
+) %>%
+  arrange(Group, Omics_Type, Direction)
+
+write.csv(univariate_selection_summary,
+          "../results/Figure2_univariate_selected_counts_by_sex_omics_direction.csv",
+          row.names = FALSE)
+
+knitr::kable(
+  univariate_selection_summary,
+  caption = "Univariate selected feature counts by group, omics layer, and direction."
+)
+
+# ============================================================================
+# 4. Generate & Save Separately
+# ============================================================================
+
+plot_volcano_with_forced_labels <- function(data, title, up_color, down_color,
+                                            forced_labels = character(),
+                                            n_up = 5, n_down = 5) {
+  top_features <- bind_rows(
+    select_top_features(data, n_up = n_up, n_down = n_down),
+    data %>% filter(Feature %in% forced_labels, P_Value < univariate_p_cutoff)
+  ) %>%
+    distinct(Feature, .keep_all = TRUE)
+
+  y_cutoff <- -log2(0.05)
+
+  ggplot(data, aes(x = logFC, y = logP, color = Significance)) +
+    geom_point(alpha = 0.7, size = 1.8) +
+    geom_hline(yintercept = y_cutoff, linetype = "dashed", color = "gray60") +
+    geom_vline(xintercept = 0, linetype = "solid", color = "gray80") +
+    scale_color_manual(values = c(
+      "Up" = up_color,
+      "Down" = down_color,
+      "NS" = "gray85"
+    )) +
+    ggrepel::geom_text_repel(
+      data = top_features,
+      aes(label = Feature, segment.colour = Significance),
+      color = "black",
+      size = 2.2,
+      fontface = "bold",
+      max.overlaps = Inf,
+      box.padding = 1.3,
+      point.padding = 0.45,
+      segment.size = 0.3,
+      segment.alpha = 0.45,
+      min.segment.length = 0,
+      force = 6,
+      force_pull = 0.35,
+      direction = "both",
+      seed = 42
+    ) +
+    scale_discrete_manual(
+      aesthetics = "segment.colour",
+      values = c(
+        "Up" = up_color,
+        "Down" = down_color,
+        "NS" = "gray85"
+      )
+    ) +
+    labs(
+      title = title,
+      x = "Mean difference",
+      y = "-Log2(P-Value)"
+    ) +
+    theme_classic(base_size = 12) +
+    theme(
+      legend.position = "none",
+      plot.title = element_text(face = "bold", hjust = 0.5)
+    )
+}
+
+# res_overall_plot <- use_feature_display_for_plot(res_overall)
+# res_female_plot <- use_feature_display_for_plot(res_female)
+# res_male_plot <- use_feature_display_for_plot(res_male)
+# 
+# female_forced_volcano_labels <- c(
+#   "methoxypyrazine",
+#   "Mannosamine",
+#   "N-acetyl-aminoadipic acid"
+# )
+# 
+# male_forced_volcano_labels <- c(
+#   "OMD",
+#   "25-hydroxyvitamin D3 3-sulfate",
+#   "TNXB",
+#   "LPL"
+# )
+
+# # --- Plot A: Overall ---
+# p_overall <- plot_volcano(res_overall_plot, "Full Cohort", "black", "gray50") +
+#   labs(subtitle = "Univariate volcano selection: p < 0.05; no fold-change cutoff") +
+#   theme(plot.subtitle = element_text(hjust = 0.5, size = 9, color = "gray30"))
+# ggsave("../plots/Figure2_volcano_Overall.pdf", p_overall, width = 7, height = 6)
+# print(p_overall)
+# 
+# # --- Plot B: Female ---
+# p_female  <- plot_volcano_with_forced_labels(
+#   res_female_plot,
+#   "Female Specific",
+#   "#C83231",
+#   "#E5ACA8",
+#   forced_labels = female_forced_volcano_labels
+# ) +
+#   labs(subtitle = "Univariate volcano selection: p < 0.05") +
+#   theme(plot.subtitle = element_text(hjust = 0.5, size = 9, color = "gray30"))
+# # ggsave("../plots/Figure2_PanelH_volcano_Female.pdf", p_female, width = 7, height = 6)
+# ggsave("../plots/Figure2_PanelG_volcano_Female_ppt.pdf", p_female, width = 6, height = 8)
+# print(p_female)
+# 
+# # --- Plot C: Male ---
+# p_male    <- plot_volcano_with_forced_labels(
+#   res_male_plot,
+#   "Male Specific",
+#   "#2E5DA5",
+#   "#94B3D1",
+#   forced_labels = male_forced_volcano_labels
+# ) +
+#   labs(subtitle = "Univariate volcano selection: p < 0.05") +
+#   theme(plot.subtitle = element_text(hjust = 0.5, size = 9, color = "gray30"))
+# # ggsave("../plots/Figure2_PanelI_volcano_Male.pdf", p_male, width = 7, height = 6)
+# ggsave("../plots/Figure2_PanelH_volcano_Male_ppt.pdf", p_male, width = 6, height = 8)
+# print(p_male)
+
+```
+
+```{r}
+res_overall_plot <- use_feature_display_for_plot(res_overall)
+res_female_plot <- use_feature_display_for_plot(res_female)
+res_male_plot <- use_feature_display_for_plot(res_male)
+
+female_forced_volcano_labels <- c(
+  "methoxypyrazine",
+  "Mannosamine",
+  "N-acetyl-aminoadipic acid",
+  "NID2",
+  "MRC1"
+)
+
+male_forced_volcano_labels <- c(
+  "OMD",
+  "25-hydroxyvitamin D3 3-sulfate",
+  "TNXB",
+  "LPL"
+)
+
+# --- Plot A: Overall ---
+p_overall <- plot_volcano(res_overall_plot, "Full Cohort", "black", "gray50") +
+  labs(subtitle = "Univariate volcano selection: p < 0.05; no fold-change cutoff") +
+  theme(plot.subtitle = element_text(hjust = 0.5, size = 9, color = "gray30"))
+ggsave("../plots/Figure2_volcano_Overall.pdf", p_overall, width = 7, height = 6)
+print(p_overall)
+
+# --- Plot B: Female ---
+p_female <- plot_volcano(res_female_plot, "Female Specific", "#C83231", "#E5ACA8",
+                          extra_labels = female_forced_volcano_labels) +
+  labs(subtitle = "Univariate volcano selection: p < 0.05") +
+  theme(plot.subtitle = element_text(hjust = 0.5, size = 9, color = "gray30"))
+# ggsave("../plots/Figure2_PanelH_volcano_Female.pdf", p_female, width = 7, height = 6)
+ggsave("../plots/Figure2_PanelG_volcano_Female_ppt.pdf", p_female, width = 6, height = 8)
+print(p_female)
+
+# --- Plot C: Male ---
+p_male <- plot_volcano(res_male_plot, "Male Specific", "#2E5DA5", "#94B3D1",
+                        extra_labels = male_forced_volcano_labels) +
+  labs(subtitle = "Univariate volcano selection: p < 0.05") +
+  theme(plot.subtitle = element_text(hjust = 0.5, size = 9, color = "gray30"))
+# ggsave("../plots/Figure2_PanelI_volcano_Male.pdf", p_male, width = 7, height = 6)
+ggsave("../plots/Figure2_PanelH_volcano_Male_ppt.pdf", p_male, width = 6, height = 8)
+print(p_male)
+```

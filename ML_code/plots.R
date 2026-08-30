@@ -5,6 +5,7 @@
 library(tidyverse)
 library(MASS)
 library(ggplot2)
+library(ggnewscale)
 
 # prep_pca_matrix <- function(df, feature_cols, regress_age = TRUE, var_quantile = 0.2) {
 #   
@@ -262,22 +263,22 @@ calc_de_stats <- function(df, group_col, feature_cols) {
 # ============================================================================
 # 2. Feature Selection Function
 # ============================================================================
-# select_top_features <- function(data, n_up = 5, n_down = 5) {
-#   # Get top upregulated features (most positive logFC with P < 0.05)
-#   top_up <- data %>%
-#     filter(P_Value < 0.05, logFC > 0) %>%
-#     arrange(desc(logFC)) %>%
-#     head(n_up)
-#   
-#   # Get top downregulated features (most negative logFC with P < 0.05)
-#   top_down <- data %>%
-#     filter(P_Value < 0.05, logFC < 0) %>%
-#     arrange(logFC) %>%
-#     head(n_down)
-#   
-#   # Combine and return
-#   rbind(top_up, top_down)
-# }
+select_top_features <- function(data, n_up = 5, n_down = 5) {
+  # Get top upregulated features (most positive logFC with P < 0.05)
+  top_up <- data %>%
+    filter(P_Value < 0.05, logFC > 0) %>%
+    arrange(desc(logFC)) %>%
+    head(n_up)
+
+  # Get top downregulated features (most negative logFC with P < 0.05)
+  top_down <- data %>%
+    filter(P_Value < 0.05, logFC < 0) %>%
+    arrange(logFC) %>%
+    head(n_down)
+
+  # Combine and return
+  rbind(top_up, top_down)
+}
 # 
 # # ============================================================================
 # # 3. Plotting Function (Improved Labeling)
@@ -341,13 +342,171 @@ calc_de_stats <- function(df, group_col, feature_cols) {
 #     )
 # }
 
+# plot_volcano <- function(data, title, up_color, down_color, 
+#                          n_up = 5, n_down = 5) {
+#   
+#   # Select features to label based on extreme fold changes
+#   top_features <- select_top_features(data, n_up, n_down)
+#   
+#   y_cutoff <- -log2(0.05) 
+#   
+#   ggplot(data, aes(x = logFC, y = logP, color = Significance)) +
+#     geom_point(alpha = 0.7, size = 1.8) +
+#     
+#     geom_hline(yintercept = y_cutoff, linetype = "dashed", color = "gray60") +
+#     geom_vline(xintercept = 0, linetype = "solid", color = "gray80") +
+#     
+#     scale_color_manual(values = c(
+#       "Up" = up_color,
+#       "Down" = down_color,
+#       "NS" = "gray85"
+#     )) +
+#     
+#     # Improved text labels with better visibility and placement
+#     geom_text_repel(
+#       data = top_features,
+#       aes(label = Feature, segment.colour = Significance),
+#       size = 2.2,  
+#       fontface = "bold",  # Bolder text for better visibility
+#       max.overlaps = 20,
+#       box.padding = 1.1,  # Increased padding around text boxes
+#       point.padding = 0.35,  # Increased padding around points
+#       segment.size = 0.3,  # Slightly thicker lines
+#       segment.alpha = 0.3,  # More visible lines
+#       min.segment.length = 0,
+#       force = 3,  # Increased repulsion force
+#       force_pull = 0.6,  # Stronger pull towards points
+#       direction = "both",
+#       seed = 42,
+#       # Key additions for your requirements:
+#       # ylim = c(y_cutoff + 0.3, NA),  # Prevent labels from going below the line
+#       nudge_y = 0.2  # Push labels slightly upward
+#     ) +
+#     
+#     # Add scale for segment colors to match points
+#     scale_discrete_manual(
+#       aesthetics = "segment.colour",
+#       values = c(
+#         "Up" = up_color,
+#         "Down" = down_color,
+#         "NS" = "gray85"
+#       )
+#     ) +
+#     
+#     labs(
+#       title = title,
+#       x = "Log2 Fold Change",
+#       y = "-Log2(P-Value)"
+#     ) +
+#     theme_classic(base_size = 12) +
+#     theme(
+#       legend.position = "none",
+#       plot.title = element_text(face = "bold", hjust = 0.5)
+#     )
+# }
+
+
+# plot_volcano <- function(data, title, up_color, down_color, 
+#                          n_up = 5, n_down = 5,
+#                          extra_labels = character(0)) {
+#   
+#   # Select features to label based on extreme fold changes
+#   top_features <- select_top_features(data, n_up, n_down)
+#   
+#   y_cutoff <- -log2(0.05) 
+#   
+#   # Add any manually-requested features not already selected, 
+#   # so ggrepel treats them as one label set (no cross-layer overlap)
+#   forced_features <- data %>%
+#     filter(Feature %in% extra_labels,
+#            P_Value < univariate_p_cutoff,
+#            !Feature %in% top_features$Feature)
+#   
+#   label_data <- bind_rows(top_features, forced_features)
+#   
+#   ggplot(data, aes(x = logFC, y = logP, color = Significance)) +
+#     geom_point(alpha = 0.7, size = 1.8) +
+#     
+#     geom_hline(yintercept = y_cutoff, linetype = "dashed", color = "gray60") +
+#     geom_vline(xintercept = 0, linetype = "solid", color = "gray80") +
+#     
+#     scale_color_manual(values = c(
+#       "Up" = up_color,
+#       "Down" = down_color,
+#       "NS" = "gray85"
+#     )) +
+#     
+#     # Single combined label layer: top features + forced features together
+#     geom_text_repel(
+#       data = label_data,
+#       aes(label = Feature, segment.colour = Significance),
+#       size = 2.2,  
+#       fontface = "bold",
+#       max.overlaps = 20,
+#       box.padding = 1.1,
+#       point.padding = 0.35,
+#       segment.size = 0.3,
+#       segment.alpha = 0.3,
+#       min.segment.length = 0,
+#       force = 3,
+#       force_pull = 0.6,
+#       direction = "both",
+#       seed = 42,
+#       nudge_y = 0.2
+#     ) +
+#     
+#     scale_discrete_manual(
+#       aesthetics = "segment.colour",
+#       values = c(
+#         "Up" = up_color,
+#         "Down" = down_color,
+#         "NS" = "gray85"
+#       )
+#     ) +
+#     
+#     labs(
+#       title = title,
+#       x = "Log2 Fold Change",
+#       y = "-Log2(P-Value)"
+#     ) +
+#     theme_classic(base_size = 12) +
+#     theme(
+#       legend.position = "none",
+#       plot.title = element_text(face = "bold", hjust = 0.5)
+#     )
+# }
+
+
+# Small helper: darken a hex color by a given fraction (0-1)
+darken_color <- function(hex, factor = 0.3) {
+  rgb_val <- grDevices::col2rgb(hex)
+  rgb_dark <- rgb_val * (1 - factor)
+  grDevices::rgb(rgb_dark[1], rgb_dark[2], rgb_dark[3], maxColorValue = 255)
+}
+
 plot_volcano <- function(data, title, up_color, down_color, 
-                         n_up = 5, n_down = 5) {
+                         n_up = 5, n_down = 5,
+                         extra_labels = character(0),
+                         label_darken = 0.3) {
   
   # Select features to label based on extreme fold changes
   top_features <- select_top_features(data, n_up, n_down)
   
   y_cutoff <- -log2(0.05) 
+  
+  # Add any manually-requested features not already selected, 
+  # so ggrepel treats them as one label set (no cross-layer overlap)
+  forced_features <- data %>%
+    filter(Feature %in% extra_labels,
+           P_Value < univariate_p_cutoff,
+           !Feature %in% top_features$Feature)
+  
+  label_data <- bind_rows(top_features, forced_features)
+  
+  # Darker versions of the point colors, used ONLY for label text
+  up_color_dark   <- darken_color(up_color, label_darken)
+  down_color_dark <- darken_color(down_color, label_darken)
+  ns_color_dark   <- darken_color("gray85", label_darken)
   
   ggplot(data, aes(x = logFC, y = logP, color = Significance)) +
     geom_point(alpha = 0.7, size = 1.8) +
@@ -361,28 +520,32 @@ plot_volcano <- function(data, title, up_color, down_color,
       "NS" = "gray85"
     )) +
     
-    # Improved text labels with better visibility and placement
+    # Start a fresh color scale so label text can be darker than the points
+    ggnewscale::new_scale_color() +
+    
     geom_text_repel(
-      data = top_features,
-      aes(label = Feature, segment.colour = Significance),
+      data = label_data,
+      aes(label = Feature, color = Significance, segment.colour = Significance),
       size = 2.2,  
-      fontface = "bold",  # Bolder text for better visibility
+      fontface = "bold",
       max.overlaps = 20,
-      box.padding = 1.1,  # Increased padding around text boxes
-      point.padding = 0.35,  # Increased padding around points
-      segment.size = 0.3,  # Slightly thicker lines
-      segment.alpha = 0.3,  # More visible lines
+      box.padding = 1.1,
+      point.padding = 0.35,
+      segment.size = 0.3,
+      segment.alpha = 0.3,
       min.segment.length = 0,
-      force = 3,  # Increased repulsion force
-      force_pull = 0.6,  # Stronger pull towards points
+      force = 3,
+      force_pull = 0.6,
       direction = "both",
       seed = 42,
-      # Key additions for your requirements:
-      # ylim = c(y_cutoff + 0.3, NA),  # Prevent labels from going below the line
-      nudge_y = 0.2  # Push labels slightly upward
+      nudge_y = 0.2
     ) +
+    scale_color_manual(values = c(
+      "Up" = up_color_dark,
+      "Down" = down_color_dark,
+      "NS" = ns_color_dark
+    ), guide = "none") +
     
-    # Add scale for segment colors to match points
     scale_discrete_manual(
       aesthetics = "segment.colour",
       values = c(

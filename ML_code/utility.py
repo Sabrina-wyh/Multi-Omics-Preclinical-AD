@@ -592,14 +592,21 @@ def evaluate_model_with_stratified_cf(df, model_type, param_combinations, inner_
         # ... (Rest of your feature importance and metric calculation logic remains exactly the same) ...
         # (Copied for brevity, ensure you keep your existing metric calculation code here)
         
-        # Feature importance extraction
-        if hasattr(best_model, 'coef_'):
+        # Feature importance extraction. For L1 logistic regression, record only
+        # genuinely selected (non-zero) coefficients. Previously all coefficients,
+        # including zeros, were stored before the L1 filter and later appeared to
+        # be "selected" in the aggregated coefficient table.
+        if isinstance(best_model, LogisticRegression) and best_model.penalty == 'l1':
+            coefs = best_model.coef_[0]
+            fitted_features = list(selected_features)
+            nonzero = np.flatnonzero(coefs != 0)
+            selected_features = [fitted_features[i] for i in nonzero]
+            for i in nonzero:
+                feature_coefficient_list[fitted_features[i]].append(coefs[i])
+        elif hasattr(best_model, 'coef_'):
             coefs = best_model.coef_[0]
             for i, feature in enumerate(selected_features):
                 feature_coefficient_list[feature].append(coefs[i])
-        if isinstance(best_model, LogisticRegression) and best_model.penalty == 'l1':
-            coefs = best_model.coef_[0]
-            selected_features = [feature_names[i] for i, coef in enumerate(coefs) if coef != 0]
         if model_type in ['gradient_boosting', 'random_forest']:
             importances = best_model.feature_importances_
             for i, feature in enumerate(selected_features):
@@ -633,6 +640,17 @@ def evaluate_model_with_stratified_cf(df, model_type, param_combinations, inner_
     feature_selection_df = feature_selection_df[feature_selection_df['Count'] > 0]
     average_feature_count = total_feature_count / outer_n_split
 
+    feature_coefficient_columns = [
+        'Feature',
+        'Mean_Coefficient',
+        'Std_Coefficient',
+        'SE_Coefficient',
+        'Median_Coefficient',
+        'Q1_Coefficient',
+        'Q3_Coefficient',
+        'Abs_Mean_Coefficient',
+        'Count',
+    ]
     feature_coefficient_data = []
     for feature, coef_list in feature_coefficient_list.items():
         if len(coef_list) > 0:
@@ -648,7 +666,10 @@ def evaluate_model_with_stratified_cf(df, model_type, param_combinations, inner_
                 'Count': len(coef_list)
             })
     
-    feature_coefficient_df = pd.DataFrame(feature_coefficient_data)
+    feature_coefficient_df = pd.DataFrame(
+        feature_coefficient_data,
+        columns=feature_coefficient_columns
+    )
     feature_coefficient_df = feature_coefficient_df.sort_values(by='Abs_Mean_Coefficient', ascending=False)
 
     return (y_true_list, y_pred_prob_list, y_pred_list, feature_selection_df, 
@@ -1136,6 +1157,18 @@ def extract_results(all_results, key):
                 feature_coef_aggregated[feature]['coef_values'].append(row['Mean_Coefficient'])
                 feature_coef_aggregated[feature]['abs_coef_values'].append(row['Abs_Mean_Coefficient'])
         
+        coefficient_columns = [
+            'Feature',
+            'Mean_Coefficient',
+            'Std_Coefficient',
+            'SE_Coefficient',
+            'Median_Coefficient',
+            'Q1_Coefficient',
+            'Q3_Coefficient',
+            'Abs_Mean_Coefficient',
+            'Count',
+        ]
+
         # Calculate overall statistics
         coef_summary = []
         for feature, data in feature_coef_aggregated.items():
@@ -1151,7 +1184,7 @@ def extract_results(all_results, key):
                 'Count': len(data['coef_values'])
             })
         
-        extracted_data = pd.DataFrame(coef_summary)
+        extracted_data = pd.DataFrame(coef_summary, columns=coefficient_columns)
         extracted_data = extracted_data.sort_values('Abs_Mean_Coefficient', ascending=False)
 
         
@@ -1749,3 +1782,62 @@ def plot_feature_coefficients_lollipop_enhanced(
         
     plt.show()
 
+
+def _bh_qvalues(pvals):
+    p = np.asarray(pvals, float)
+    m = len(p)
+    order = np.argsort(p)
+    q = np.empty(m)
+    q_sorted = p[order] * m / np.arange(1, m + 1)
+    q_sorted = np.minimum.accumulate(q_sorted[::-1])[::-1]
+    q[order] = np.clip(q_sorted, 0, 1)
+    return q
+
+def filter_significant_features(coef_df, alpha=0.05, use_t=True,
+                                fdr=False, min_count=None):
+    """
+    Wald/t-test on aggregated lasso coefficients; filter beta != 0.
+    Needs columns: Feature, Mean_Coefficient, SE_Coefficient, Count,
+    Abs_Mean_Coefficient. Returns (significant_df, feature_list).
+    """
+    df = coef_df.copy()
+    se = df["SE_Coefficient"].replace(0, np.nan)
+    stat = df["Mean_Coefficient"] / se
+
+    if use_t:
+        dfree = (df["Count"] - 1).clip(lower=1)
+        df["p_value"] = 2 * stats.t.sf(np.abs(stat), dfree)
+    else:
+        df["p_value"] = 2 * stats.norm.sf(np.abs(stat))
+    df["p_value"] = df["p_value"].fillna(1.0)   # undefined test -> not significant
+
+    sig_col = "p_value"
+    if fdr:
+        df["q_value"] = _bh_qvalues(df["p_value"].values)
+        sig_col = "q_value"
+
+    keep = df[sig_col] < alpha
+    if min_count is not None:
+        keep &= df["Count"] >= min_count
+
+    sig = (df[keep]
+           .sort_values("Abs_Mean_Coefficient", ascending=False)
+           .reset_index(drop=True))
+    return sig, sig["Feature"].tolist()
+
+
+def filter_stable_features(feature_selection_df, n_evaluations,
+                           min_frequency=0.5):
+    """Keep features selected in a minimum fraction of outer CV fits."""
+    if n_evaluations <= 0:
+        raise ValueError("n_evaluations must be positive")
+    if not 0 < min_frequency <= 1:
+        raise ValueError("min_frequency must be in (0, 1]")
+
+    stable = feature_selection_df.copy()
+    stable["Selection Frequency"] = stable["Total Count"] / n_evaluations
+    stable = stable[stable["Selection Frequency"] >= min_frequency]
+    stable = stable.sort_values(
+        ["Selection Frequency", "Total Count"], ascending=False
+    ).reset_index(drop=True)
+    return stable, stable["Feature"].tolist()
