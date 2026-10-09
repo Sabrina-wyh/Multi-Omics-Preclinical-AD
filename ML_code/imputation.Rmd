@@ -6,6 +6,7 @@ output: word_document
 ---
 
 ```{r}
+set.seed(42)
 library(missRanger)
 ```
 

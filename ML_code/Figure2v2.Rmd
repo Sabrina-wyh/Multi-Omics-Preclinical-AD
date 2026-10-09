@@ -23,13 +23,55 @@ dir.create("../results", showWarnings = FALSE, recursive = TRUE)
 omics_df <- read.csv("../preprocessed_data/omics_aibl_demo_clean_imputed.csv", na.strings = c("", "NA"), check.names = FALSE)
 names_df <- readxl::read_excel("../preprocessed_data/feature_names_clean.xlsx")
 
+feature_id_aliases <- c(
+  "DG(22:5/22:6/0:0)" = "DG(44:11)"
+)
+
 clean_feature_name <- function(x) {
-  sub("\\.[0-9]$", "", as.character(x))
+  clean_name <- sub("\\.[0-9]$", "", as.character(x))
+  alias_name <- unname(feature_id_aliases[clean_name])
+  ifelse(is.na(alias_name), clean_name, alias_name)
 }
 
 clean_feature_vector <- function(x) {
   x <- x[!is.na(x)]
   unique(clean_feature_name(x))
+}
+
+collapse_duplicate_feature_columns <- function(df) {
+  cleaned_names <- clean_feature_name(names(df))
+  column_groups <- split(seq_along(df), cleaned_names)
+
+  collapsed_df <- purrr::map_dfc(names(column_groups), function(cleaned_col) {
+    idx <- column_groups[[cleaned_col]]
+    if (length(idx) == 1) {
+      out <- df[idx]
+      names(out) <- cleaned_col
+      return(out)
+    }
+
+    numeric_block <- suppressWarnings(
+      as.data.frame(lapply(df[idx], as.numeric), check.names = FALSE)
+    )
+
+    tibble(!!cleaned_col := rowMeans(numeric_block, na.rm = TRUE))
+  })
+
+  as.data.frame(collapsed_df, check.names = FALSE)
+}
+
+zscore_feature_matrix <- function(df, features) {
+  out <- df
+  out[features] <- lapply(out[features], function(x) {
+    x <- suppressWarnings(as.numeric(x))
+    x_mean <- mean(x, na.rm = TRUE)
+    x_sd <- sd(x, na.rm = TRUE)
+    if (!is.finite(x_sd) || x_sd == 0) {
+      return(rep(0, length(x)))
+    }
+    (x - x_mean) / x_sd
+  })
+  out
 }
 
 # Manuscript/display renaming only. Raw feature IDs are kept for matching,
@@ -46,7 +88,8 @@ manuscript_feature_name_map <- c(
   "cyclopentanehexanoic acid" = "oxo-hexadecanoic acid",
   "Cyclopentanehexanoic acid" = "oxo-hexadecanoic acid",
   "Cys/Asp/Asp/Thr/Thr" = "sulfur-containing pentapeptide",
-  "DG(22:5/22:6/0:0)" = "DG(44:11)",
+  # "DG(22:5/22:6/0:0)" = "DG(44:11)",
+  # "DG(44:11)" = "DG(44:11)",
   "Dihomocholic acid" = "dihomocholic acid",
   "epithio-seco-cholestadienetriol S_S-dioxide" = "25-hydroxyvitamin D3 3-sulfate",
   "Epithio-seco-cholestadienetriol S,S-dioxide" = "25-hydroxyvitamin D3 3-sulfate",
@@ -95,12 +138,27 @@ normalise_label <- function(x) {
 omics_df$Demographic.Sex <- factor(normalise_sex(omics_df$Demographic.Sex), levels = c("Female", "Male"))
 omics_df$label <- factor(normalise_label(omics_df$label), levels = c("N", "H"))
 
+omics_df <- collapse_duplicate_feature_columns(omics_df)
+omics_df$Demographic.Sex <- factor(normalise_sex(omics_df$Demographic.Sex), levels = c("Female", "Male"))
+omics_df$label <- factor(normalise_label(omics_df$label), levels = c("N", "H"))
+
 keys                     <- clean_feature_vector(names_df$keys)
 label_names              <- clean_feature_vector(names_df$label_names)
 demographic_cols         <- clean_feature_vector(names_df$demographic_cols)
 proteomic_cols           <- clean_feature_vector(names_df$proteomics_cols)
 metabolomics_cols        <- clean_feature_vector(names_df$metabolomics_cols)
 neuropsychological_cols  <- clean_feature_vector(names_df$neuropsychological_cols)
+
+noise_features_to_remove <- clean_feature_vector(c(
+  "Citroside A",
+  "Citroside A.4",
+  "threo-1-(p-Hydroxyphenyl)propylene glycol 4'-glucoside",
+  "threo-1-(p-Hydroxyphenyl)propylene glycol 4'-glucoside.8"
+))
+
+omics_df <- omics_df %>% dplyr::select(-any_of(noise_features_to_remove))
+proteomic_cols <- setdiff(proteomic_cols, noise_features_to_remove)
+metabolomics_cols <- setdiff(metabolomics_cols, noise_features_to_remove)
 
 feature_cols <- unique(c(
   proteomic_cols,
@@ -131,6 +189,45 @@ add_omics_type <- function(df) {
     )
 }
 
+add_univariate_volcano_effect <- function(stats_df, source_df, group_col = "label") {
+  effect_df <- purrr::map_dfr(stats_df$Feature, function(feat) {
+    if (!feat %in% colnames(source_df)) {
+      return(tibble(Feature = feat, Volcano_Effect = NA_real_))
+    }
+
+    vals_n <- suppressWarnings(as.numeric(source_df[source_df[[group_col]] == "N", feat]))
+    vals_h <- suppressWarnings(as.numeric(source_df[source_df[[group_col]] == "H", feat]))
+    vals_n <- vals_n[!is.na(vals_n)]
+    vals_h <- vals_h[!is.na(vals_h)]
+
+    if (length(vals_n) <= 1 || length(vals_h) <= 1) {
+      return(tibble(Feature = feat, Volcano_Effect = NA_real_))
+    }
+
+    pooled_sd <- sqrt(((length(vals_h) - 1) * stats::var(vals_h) +
+                         (length(vals_n) - 1) * stats::var(vals_n)) /
+                        (length(vals_h) + length(vals_n) - 2))
+    effect <- ifelse(is.na(pooled_sd) || pooled_sd == 0,
+                     NA_real_,
+                     (mean(vals_h) - mean(vals_n)) / pooled_sd)
+
+    tibble(Feature = feat, Volcano_Effect = effect)
+  })
+
+  stats_df %>%
+    left_join(effect_df, by = "Feature")
+}
+
+use_univariate_volcano_x <- function(df) {
+  df %>%
+    mutate(
+      Standardized_Mean_Difference = logFC,
+      Cohen_d = Volcano_Effect
+    )
+}
+
+volcano_x_label <- "Standardized mean difference"
+
 summarise_selected_counts <- function(df, group_name, analysis_name, direction_col) {
   df %>%
     count(
@@ -149,6 +246,10 @@ if (length(missing_feature_cols) > 0) {
 }
 feature_cols <- intersect(feature_cols, colnames(omics_df))
 stopifnot(length(feature_cols) > 0)
+
+omics_df_raw <- omics_df
+omics_df <- zscore_feature_matrix(omics_df_raw, feature_cols)
+omics_df_volcano <- omics_df
 
 # Define colors
 pca_colors <- c(
@@ -595,16 +696,19 @@ knitr::kable(
 # ============================================================================
 # 2. Run Analysis
 # ============================================================================
-res_overall <- calc_de_stats(omics_df, "label", feature_cols)
-res_overall <- res_overall %>% add_omics_type()
+res_overall <- calc_de_stats(omics_df_volcano, "label", feature_cols)
+res_overall <- add_univariate_volcano_effect(res_overall, omics_df_volcano, "label")
+res_overall <- res_overall %>% add_omics_type() %>% use_univariate_volcano_x()
 
-df_female <- omics_df %>% filter(Demographic.Sex == "Female")
+df_female <- omics_df_volcano %>% filter(Demographic.Sex == "Female")
 res_female <- calc_de_stats(df_female, "label", feature_cols)
-res_female <- res_female %>% add_omics_type()
+res_female <- add_univariate_volcano_effect(res_female, df_female, "label")
+res_female <- res_female %>% add_omics_type() %>% use_univariate_volcano_x()
 
-df_male <- omics_df %>% filter(Demographic.Sex == "Male")
+df_male <- omics_df_volcano %>% filter(Demographic.Sex == "Male")
 res_male <- calc_de_stats(df_male, "label", feature_cols)
-res_male <- res_male %>% add_omics_type()
+res_male <- add_univariate_volcano_effect(res_male, df_male, "label")
+res_male <- res_male %>% add_omics_type() %>% use_univariate_volcano_x()
 
 # ============================================================================
 # Save Results to CSV
@@ -721,8 +825,8 @@ plot_volcano_with_forced_labels <- function(data, title, up_color, down_color,
     ) +
     labs(
       title = title,
-      x = "Mean difference",
-      y = "-Log2(P-Value)"
+      x = volcano_x_label,
+      y = "-log2(P value)"
     ) +
     theme_classic(base_size = 12) +
     theme(
@@ -786,16 +890,17 @@ plot_volcano_with_forced_labels <- function(data, title, up_color, down_color,
 ```
 
 ```{r}
-res_overall_plot <- use_feature_display_for_plot(res_overall)
-res_female_plot <- use_feature_display_for_plot(res_female)
-res_male_plot <- use_feature_display_for_plot(res_male)
+res_overall_plot <- res_overall %>% use_feature_display_for_plot()
+res_female_plot <- res_female %>% use_feature_display_for_plot()
+res_male_plot <- res_male %>% use_feature_display_for_plot()
 
 female_forced_volcano_labels <- c(
   "methoxypyrazine",
   "Mannosamine",
   "N-acetyl-aminoadipic acid",
   "NID2",
-  "MRC1"
+  "MRC1",
+  "1-Methyl-1_3-cyclohexadiene"
 )
 
 male_forced_volcano_labels <- c(
@@ -807,7 +912,10 @@ male_forced_volcano_labels <- c(
 
 # --- Plot A: Overall ---
 p_overall <- plot_volcano(res_overall_plot, "Full Cohort", "black", "gray50") +
-  labs(subtitle = "Univariate volcano selection: p < 0.05; no fold-change cutoff") +
+  labs(
+    subtitle = "Univariate volcano selection: p < 0.05; no fold-change cutoff",
+    x = volcano_x_label
+  ) +
   theme(plot.subtitle = element_text(hjust = 0.5, size = 9, color = "gray30"))
 ggsave("../plots/Figure2_volcano_Overall.pdf", p_overall, width = 7, height = 6)
 print(p_overall)
@@ -815,7 +923,10 @@ print(p_overall)
 # --- Plot B: Female ---
 p_female <- plot_volcano(res_female_plot, "Female Specific", "#C83231", "#E5ACA8",
                           extra_labels = female_forced_volcano_labels) +
-  labs(subtitle = "Univariate volcano selection: p < 0.05") +
+  labs(
+    subtitle = "Univariate volcano selection: p < 0.05",
+    x = volcano_x_label
+  ) +
   theme(plot.subtitle = element_text(hjust = 0.5, size = 9, color = "gray30"))
 # ggsave("../plots/Figure2_PanelH_volcano_Female.pdf", p_female, width = 7, height = 6)
 ggsave("../plots/Figure2_PanelG_volcano_Female_ppt.pdf", p_female, width = 6, height = 8)
@@ -824,7 +935,10 @@ print(p_female)
 # --- Plot C: Male ---
 p_male <- plot_volcano(res_male_plot, "Male Specific", "#2E5DA5", "#94B3D1",
                         extra_labels = male_forced_volcano_labels) +
-  labs(subtitle = "Univariate volcano selection: p < 0.05") +
+  labs(
+    subtitle = "Univariate volcano selection: p < 0.05",
+    x = volcano_x_label
+  ) +
   theme(plot.subtitle = element_text(hjust = 0.5, size = 9, color = "gray30"))
 # ggsave("../plots/Figure2_PanelI_volcano_Male.pdf", p_male, width = 7, height = 6)
 ggsave("../plots/Figure2_PanelH_volcano_Male_ppt.pdf", p_male, width = 6, height = 8)
