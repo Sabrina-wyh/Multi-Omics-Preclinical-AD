@@ -4,8 +4,6 @@ This is the official repository accompanying the paper **Exploring a novel panel
 
 **Authors:**
 
-Yihan Wang, Chenyin Chu, Liwei Ma, Katherine J. Jeppe, PhD, Joel R. Steele, PhD, Christopher K. Barlow, PhD, Christopher Fowler, PhD, Ralf B. Schittenhelm, PhD, Colin L. Masters, MD, Benjamin Goudey, PhD, Liang Jin, PhD, Yijun Pan, PhD, and the AIBL Research Group  
-
 
 ## Overview
 We utilized data from 90 participants in the AIBL cohort, all of whom had completed the ORCA (Online Repeatable Cognitive Assessment) learning test. The study incorporated *proteomics* data consisting of 596 high/mid-confidence features, as well as *metabolomics* data with 1,184 peak intensity features. Additionally, *demographic* factors such as age, gender, education, and APOE4 status (yes/no) were included in the analysis. The primary aims of the study were: 1) to use minimally invasive data to predict amyloid-beta status (high vs. normal) based on PET imaging; and 2) to identify potential biomarkers that can distinguish participants in the preclinical phase of Alzheimer's disease.
